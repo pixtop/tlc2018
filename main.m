@@ -3,34 +3,47 @@ clear
 
 %% Variables
 
-Ts = 12; %Nb d'echantillon d'un symbole.
-nb_bits = 100; %Longueur de la trame binaire.
-fe = 10^4;  %Frequence d'echantillonage.
-%--------------------------------------------------------------------------
-V = 1;
-bits = V*(randi(2,1,nb_bits)-1); 
+Ts = 10; %Nb d'echantillon d'un symbole.
 %--------------------------------------------------------------------------
 SNR = 10^(2/10);
 bruit = 'none'; %('none','real','complex') type de bruit dans le canal
 %--------------------------------------------------------------------------
-filtre = 'RA'; %('RA','RNA','FA','CA') filtre Forme+Reception
-%--------------------------------------------------------------------------
 %Instant initial.
-if strcmp(filtre,'CA')
-    span = 10;
-    t0 = span*Ts+1;
-else
-    t0 = Ts;
-end
+span = 10;
+t0 = span*Ts+1;
 %--------------------------------------------------------------------------
-% fp = 3000/fe;   
-fp = 0;
-%--------------------------------------------------------------------------
-modu = 'BPSK'; %Type de modulation (BPSK,QPSK,8PSK,16QAM) 
+%PARAMETRES DU CODE
+% nombre de bits par symbole
+Nb_bits_symb = 8;
+% capacite de correction du code
+t = 8;
+% nombre de symboles du mot de code RS (apres codage)
+N_RS = 2^Nb_bits_symb-1;
+% nombre de symboles du mot d'info RS
+K_RS = N_RS-2*t;
+%Génération de bits
+%!! Le nombre de bits générés doit être un multiple de K_RS pour
+%que les programmes de codage/décodage RS fonctionnent
+%On génère Nb_paquets_RS de taille K_RS*Nb_bits_symb bits
+Nb_paquets_RS=64;
+Nb_bits=Nb_paquets_RS*K_RS*Nb_bits_symb;
+bits=randi(2,1,Nb_bits)-1;
+
+%% Codage RS
+
+H = comm.RSEncoder(N_RS,K_RS,'BitInput',true);
+bits_code_RS=step(H,bits.').';
+
+%% Codage convolutif
+k = 7;% longueur contrainte
+g1 = 171;g2 = 133; % polynomes générateurs en octal
+trellis = poly2trellis(k, [g1 g2]);
+p = [1 1 1 1]; % matrice de poinçonnage
+bits_RS_conv = convenc(bits_code_RS, trellis, p);
 
 %% Chaine de transmission
 
-[ x, z ] = chaine_transmission(bits, Ts, filtre, SNR, bruit, fp, modu);
+[ x, z ] = chaine_transmission(bits_RS_conv, Ts, SNR, bruit);
 
 %% Echantillonnage
 
@@ -38,73 +51,27 @@ z_echan = z(t0:Ts:end);
 
 %% Demapping
 
-bits_estimes = zeros(1,nb_bits);
-switch(modu)
-    case 'BPSK'
-        bits_estimes = (z_echan > 0);
-    case 'QPSK'
-        bits_estimes(1:2:end) = (real(z_echan) > 0 );
-        bits_estimes(2:2:end) = (imag(z_echan) > 0 );
-    case '8PSK'
-        bits_recus2 = pskdemod(z_echan, 8, 0, 'gray');
-        bits_recus1 = de2bi(bits_recus2)';
-        bits_estimes = bits_recus1(:)';
-    case '16QAM'
-        bits_recus2 = qamdemod(z_echan, 16)';  
-        bits_recus1 = de2bi(bits_recus2)';
-        bits_estimes = bits_recus1(:)';
-end
+bits_estimes = zeros(1,length(bits_RS_conv));
+bits_estimes(1:2:end) = (real(z_echan) < 0 );
+bits_estimes(2:2:end) = (imag(z_echan) < 0 );
 
-TEB = sum(bits_estimes ~= bits) / nb_bits;
+bits_rcp = vitdec(bits_estimes, trellis, 5*k, 'trunc', 'hard', p);
 
-%% Enveloppe complexe sur frequence
+H = comm.RSDecoder(N_RS,K_RS,'BitInput',true);
+bits_decodes_RS = step(H,bits_rcp.').';
 
-xp = x.*exp(1i*2*pi*fp*(1:length(x)));
+TEB = sum(bits_decodes_RS ~= bits) / Nb_bits;
 
 %% Affichages
 %--------------------------------------------------------------------------
-% Phase
+% Signal emis
 
 % figure(1)
 % plot(real(x), 'black')
 % grid on
-% title("Trace du signal en phase")
+% title("Trace du signal emis")
 % xlabel("Temps")
 % ylabel("Amplitude")
-
-%--------------------------------------------------------------------------
-% Quadrature
-%--------------------------------------------------------------------------
-
-% figure(2)
-% plot(imag(x), 'blue')
-% grid on
-% title("Trace du signal en quadrature")
-% xlabel("Temps")
-% ylabel("Amplitude")
-
-%--------------------------------------------------------------------------
-% Porteuse
-%--------------------------------------------------------------------------
-
-% figure (3)
-% plot(real(xp), 'red')
-% grid on;
-% title("Trace du signal sur frequence porteuse")
-% xlabel("Temps")
-% ylabel("Amplitude")
-
-%--------------------------------------------------------------------------
-% Diagramme de l'oeil
-%--------------------------------------------------------------------------
-
-figure(4)
-hold on
-for i=1:nb_bits/2
-    plot((0:2*Ts),z(i*Ts:(i+2)*Ts))
-end
-hold off
-title("Diagramme de l'oeil")
 
 %--------------------------------------------------------------------------
 % Constellation en sortie d'echantillonneur
