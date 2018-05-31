@@ -1,6 +1,8 @@
 close all;
 clear
 
+% Calcul le TEB en fonction des codages.
+
 %% Variables
 rs = true;
 conv = true;

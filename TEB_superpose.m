@@ -1,3 +1,7 @@
+close all;
+clear
+
+% Calcul le TEB en fonction des codages.
 
 %% Variables
 SNR_db = (-4:0.5:2);
